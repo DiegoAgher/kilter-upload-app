@@ -283,5 +283,158 @@ def main():
             st.rerun()
 
 
+# ==========================================
+# ADMIN PANEL (PASSWORD PROTECTED)
+# ==========================================
+
+def admin_panel():
+    """Secure admin panel for downloading data and viewing stats"""
+    
+    st.markdown("---")
+    st.markdown("### 🔐 Admin Panel")
+    
+    # Check if admin is logged in
+    if 'admin_authenticated' not in st.session_state:
+        st.session_state.admin_authenticated = False
+    
+    if not st.session_state.admin_authenticated:
+        # Login form
+        with st.form("admin_login"):
+            st.write("**Admin Access Only**")
+            password = st.text_input("Password", type="password")
+            login_button = st.form_submit_button("Login")
+            
+            if login_button:
+                # Get password from secrets
+                try:
+                    correct_password = st.secrets["admin"]["password"]
+                except:
+                    st.error("⚠️ Admin password not configured. See README for setup instructions.")
+                    st.stop()
+                
+                if password == correct_password:
+                    st.session_state.admin_authenticated = True
+                    st.success("✅ Login successful!")
+                    st.rerun()
+                else:
+                    st.error("❌ Incorrect password")
+    
+    else:
+        # Admin is authenticated - show admin panel
+        st.success("🔓 Admin authenticated")
+        
+        # Logout button
+        if st.button("🚪 Logout"):
+            st.session_state.admin_authenticated = False
+            st.rerun()
+        
+        st.markdown("---")
+        
+        # STATS SUMMARY
+        st.subheader("📊 Week Summary")
+        
+        csv_file = "submissions_tracking.csv"
+        
+        if os.path.exists(csv_file):
+            df = pd.read_csv(csv_file)
+            df['timestamp'] = pd.to_datetime(df['timestamp'])
+            
+            # Current week stats
+            now = datetime.now()
+            week_start = now - pd.Timedelta(days=now.weekday())
+            week_df = df[df['timestamp'] >= week_start]
+            
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                st.metric("Total Submissions", len(df))
+            with col2:
+                st.metric("This Week", len(week_df))
+            with col3:
+                remaining = max(0, 10 - len(week_df))
+                st.metric("Spots Remaining", remaining)
+            
+            # Recent submissions table
+            st.markdown("**Recent Submissions:**")
+            recent_df = df.tail(10)[['timestamp', 'name', 'email', 'problem_grade', 'file_size_mb']].sort_values('timestamp', ascending=False)
+            st.dataframe(recent_df, use_container_width=True)
+            
+        else:
+            st.info("No submissions yet")
+        
+        st.markdown("---")
+        
+        # DOWNLOAD CSV
+        st.subheader("📥 Download Data")
+        
+        if os.path.exists(csv_file):
+            with open(csv_file, "rb") as file:
+                st.download_button(
+                    label="📊 Download Submissions CSV",
+                    data=file,
+                    file_name=f"kilter_submissions_{datetime.now().strftime('%Y%m%d')}.csv",
+                    mime="text/csv",
+                    use_container_width=True
+                )
+        else:
+            st.info("No CSV file yet - no submissions")
+        
+        # LIST VIDEOS
+        st.markdown("---")
+        st.subheader("🎥 Uploaded Videos")
+        
+        videos_dir = Path("videos")
+        if videos_dir.exists():
+            videos = list(videos_dir.glob("*"))
+            
+            if videos:
+                st.write(f"**Total videos:** {len(videos)}")
+                
+                # Show video list with download buttons
+                for video in sorted(videos, reverse=True):
+                    col1, col2, col3 = st.columns([3, 1, 1])
+                    
+                    with col1:
+                        st.text(video.name)
+                    
+                    with col2:
+                        size_mb = video.stat().st_size / (1024 * 1024)
+                        st.text(f"{size_mb:.1f} MB")
+                    
+                    with col3:
+                        with open(video, "rb") as file:
+                            st.download_button(
+                                label="⬇️",
+                                data=file,
+                                file_name=video.name,
+                                mime="video/mp4",
+                                key=f"download_{video.name}"
+                            )
+            else:
+                st.info("No videos uploaded yet")
+        else:
+            st.info("Videos folder not created yet")
+        
+        st.markdown("---")
+        
+        # DANGER ZONE
+        with st.expander("⚠️ Danger Zone"):
+            st.warning("**These actions cannot be undone!**")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                if st.button("🗑️ Clear This Week's Count"):
+                    # This just resets the counter, doesn't delete data
+                    st.info("Week counter will reset automatically on Monday")
+            
+            with col2:
+                if st.button("🗑️ Delete All Data"):
+                    st.error("This feature is disabled for safety. Manually delete files if needed.")
+
+
 if __name__ == "__main__":
     main()
+    
+    # Add admin panel at the bottom
+    admin_panel()
