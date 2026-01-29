@@ -78,17 +78,17 @@ st.markdown("""
 # HELPER FUNCTIONS
 # ==========================================
 
-def save_video(uploaded_file, user_name):
+def save_video(uploaded_file, user_name, video_type="successful"):
     """Save uploaded video to videos folder"""
     # Create videos directory if it doesn't exist
     videos_dir = Path("videos")
     videos_dir.mkdir(exist_ok=True)
     
-    # Generate unique filename
+    # Generate unique filename with video type prefix
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     safe_name = user_name.replace(" ", "_").lower()
     file_extension = uploaded_file.name.split('.')[-1]
-    filename = f"{timestamp}_{safe_name}.{file_extension}"
+    filename = f"{timestamp}_{safe_name}_{video_type}.{file_extension}"
     
     # Save file
     filepath = videos_dir / filename
@@ -166,11 +166,21 @@ def main():
     if not st.session_state.submitted:
         # Upload Form
         with st.form("upload_form"):
-            st.subheader("📹 Your Video")
-            uploaded_file = st.file_uploader(
-                "Upload your successful Kilter problem send",
+            st.subheader("📹 Your Videos")
+            st.markdown("*Upload one or both videos for better analysis*")
+            
+            unsuccessful_video = st.file_uploader(
+                "Upload your unsuccessful send (optional)",
                 type=['mp4', 'mov', 'avi', 'mkv'],
-                help="Max file size: 200MB (default Streamlit limit)"
+                help="Max file size: 200MB per video",
+                key="unsuccessful"
+            )
+            
+            successful_video = st.file_uploader(
+                "Upload your successful send (optional)",
+                type=['mp4', 'mov', 'avi', 'mkv'],
+                help="Max file size: 200MB per video",
+                key="successful"
             )
             
             st.subheader("👤 Your Information")
@@ -209,8 +219,8 @@ def main():
                 # Validation
                 errors = []
                 
-                if not uploaded_file:
-                    errors.append("Please upload a video")
+                if not unsuccessful_video and not successful_video:
+                    errors.append("Please upload at least one video (successful or unsuccessful send)")
                 if not name or not email:
                     errors.append("Name and email are required")
                 if not consent:
@@ -220,16 +230,38 @@ def main():
                     for error in errors:
                         st.error(f"❌ {error}")
                 else:
-                    # Check file size
-                    file_size_mb = uploaded_file.size / (1024 * 1024)
+                    # Check file sizes
+                    videos_to_process = []
                     
-                    if file_size_mb > 200:
-                        st.error(f"❌ File too large ({file_size_mb:.1f}MB). Maximum is 200MB.")
-                    else:
-                        # Save video
-                        with st.spinner("Uploading your video..."):
+                    if unsuccessful_video:
+                        size_mb = unsuccessful_video.size / (1024 * 1024)
+                        if size_mb > 200:
+                            st.error(f"❌ Unsuccessful video too large ({size_mb:.1f}MB). Maximum is 200MB.")
+                        else:
+                            videos_to_process.append(('unsuccessful', unsuccessful_video, size_mb))
+                    
+                    if successful_video:
+                        size_mb = successful_video.size / (1024 * 1024)
+                        if size_mb > 200:
+                            st.error(f"❌ Successful video too large ({size_mb:.1f}MB). Maximum is 200MB.")
+                        else:
+                            videos_to_process.append(('successful', successful_video, size_mb))
+                    
+                    if videos_to_process:
+                        # Save videos
+                        with st.spinner("Uploading your video(s)..."):
                             try:
-                                filepath = save_video(uploaded_file, name)
+                                saved_files = []
+                                total_size = 0
+                                
+                                for video_type, video_file, size_mb in videos_to_process:
+                                    filepath = save_video(video_file, name, video_type)
+                                    saved_files.append({
+                                        'type': video_type,
+                                        'filename': os.path.basename(filepath),
+                                        'size_mb': size_mb
+                                    })
+                                    total_size += size_mb
                                 
                                 # Log submission for tracking
                                 submission_data = {
@@ -238,8 +270,11 @@ def main():
                                     'email': email,
                                     'problem_grade': problem_grade,
                                     'problem_name': problem_name,
-                                    'video_filename': os.path.basename(filepath),
-                                    'file_size_mb': round(file_size_mb, 2),
+                                    'has_unsuccessful_video': any(v['type'] == 'unsuccessful' for v in saved_files),
+                                    'has_successful_video': any(v['type'] == 'successful' for v in saved_files),
+                                    'unsuccessful_filename': next((v['filename'] for v in saved_files if v['type'] == 'unsuccessful'), ''),
+                                    'successful_filename': next((v['filename'] for v in saved_files if v['type'] == 'successful'), ''),
+                                    'total_size_mb': round(total_size, 2),
                                     'has_notes': bool(notes),
                                     'status': 'uploaded'
                                 }
@@ -249,6 +284,7 @@ def main():
                                 # Update session state
                                 st.session_state.submitted = True
                                 st.session_state.user_name = name
+                                st.session_state.videos_uploaded = len(saved_files)
                                 st.rerun()
                                 
                             except Exception as e:
@@ -257,11 +293,14 @@ def main():
     
     else:
         # Success state
+        videos_count = st.session_state.get('videos_uploaded', 1)
+        videos_text = "video" if videos_count == 1 else "videos"
+        
         st.markdown(f"""
         <div class="success-box">
             <h2 style="color: white; margin: 0;">✅ Upload Successful!</h2>
             <p style="font-size: 1.2rem; margin-top: 1rem; color: white;">
-                Thanks {st.session_state.user_name}! Your video has been received.
+                Thanks {st.session_state.user_name}! Your {videos_count} {videos_text} received.
             </p>
         </div>
         """, unsafe_allow_html=True)
@@ -356,7 +395,8 @@ def admin_panel():
             
             # Recent submissions table
             st.markdown("**Recent Submissions:**")
-            recent_df = df.tail(10)[['timestamp', 'name', 'email', 'problem_grade', 'file_size_mb']].sort_values('timestamp', ascending=False)
+            recent_df = df.tail(10)[['timestamp', 'name', 'email', 'problem_grade', 'has_unsuccessful_video', 'has_successful_video', 'total_size_mb']].sort_values('timestamp', ascending=False)
+            recent_df.columns = ['Time', 'Name', 'Email', 'Grade', 'Has Unsuccessful', 'Has Successful', 'Size (MB)']
             st.dataframe(recent_df, use_container_width=True)
             
         else:
